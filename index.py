@@ -3,10 +3,21 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+#import requests
+#import json
+import openai
+import logging
+import time
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Scopes required by the application
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+def chunked(iterable, size):
+    """Yield successive chunks from iterable of given size."""
+    for i in range(0, len(iterable), size):
+        yield iterable[i:i + size]
 
 def get_credentials():
     """Handles the authentication and returns valid credentials."""
@@ -44,15 +55,35 @@ def fetch_unread_emails(service):
         print(f'An error occurred: {error}')
         return []
 
-def print_email_snippets(service, messages):
+#def print_email_snippets(service, messages):
     """Prints the snippets of the provided emails."""
     for message in messages:
         msg = service.users().messages().get(userId='me', id=message['id']).execute()
         print(f"Message snippet: {msg['snippet']}")
 
 
-def call_chatgpt_api():
-    api_url = "https://api.openai.com/v1/engines/davinci/completions"
+def call_chatgpt_api(text):
+    
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-turbo",
+            messages=[
+                {"role": 
+                    "system", 
+                 "content": 
+                    "Turn the following email into a to-do list task item with the format: 'Task: [task]; Due: [due date] (if applicable); Email Subject: [subject]'."},
+                {"role": 
+                    "user", 
+                "content": 
+                    text}
+            ]
+        )
+        return response['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Failed to generate tasks due to an error: {e}"
+    
+
+    """ api_url = "https://api.openai.com/v1/engines/davinci/completions"
     headers = {
         'Authorization': MY_API_KEY,
         'Content-Type': 'application/json'
@@ -66,18 +97,26 @@ def call_chatgpt_api():
     if response.status_code == 200:
         return json.loads(response.text)['choices'][0]['message']['content']
     else:
-        return "Failed to generate tasks due to an error"
+        return "Failed to generate tasks due to an error" """
 
-def process_email_to_taskss(messages, service):
+def process_emails_to_tasks(messages, service, chunk_size=10):
     """Processes the email messages to extract the tasks."""
     tasks = []
-    for message in messages:
-        msg = service.users().messages().get(userId='me', id=message['id']).execute()
-        payload = msg['payload']
-        headers = payload['headers']
-        subject = [i['value'] for i in headers if i["name"] == "Subject"]
-        if subject:
-            tasks.append(subject[0])
+    total_emails = len(messages)
+    processed_emails = 0
+
+    for chunk in chunked(messages, chunk_size):
+        for message in chunk:
+            msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
+            email_text = msg['snippet']
+            task = call_chatgpt_api(email_text)
+            print(task)
+            tasks.append(task)
+            processed_emails += 1
+            logging.info(f"Processed {processed_emails} of {total_emails} emails.")
+        
+        time.sleep(10)
+        
     return tasks
 
 def main():
@@ -89,8 +128,8 @@ def main():
         #print_email_snippets(service, messages)
         tasks = process_emails_to_tasks(messages, service)
         print("Generated Tasks:")
-        for tasks in tasks:
-            print(tasks)
+        for task in tasks:
+            print(task)
 
 if __name__ == '__main__':
     main()
